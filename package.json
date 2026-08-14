@@ -8,5 +8,5 @@
 		"node-fetch": "^3.3.2",
 		"xml2js": "^0.6.2"
 	},
-	"packageManager": "pnpm@11.20.0"
+	"packageManager": "pnpm@11.21.0"
 }
