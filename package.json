@@ -4,9 +4,9 @@
 	"version": "1.0.0",
 	"dependencies": {
 		"dotenv": "^17.4.2",
-		"googleapis": "^174.0.1",
+		"googleapis": "^176.0.0",
 		"node-fetch": "^3.3.2",
 		"xml2js": "^0.6.2"
 	},
-	"packageManager": "pnpm@11.21.0"
+	"packageManager": "pnpm@11.22.0"
 }
