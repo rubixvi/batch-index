@@ -1,165 +1,209 @@
-import "dotenv/config";
-import fs from "node:fs";
-import { google } from "googleapis";
-import fetch from "node-fetch";
-import xml2js from "xml2js";
+import 'dotenv/config'
+import { randomUUID } from 'node:crypto'
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { google } from 'googleapis'
+import xml2js from 'xml2js'
 
-const parser = new xml2js.Parser();
+const visited = new Set()
 
-const sitemapUrl = process.env.SITEMAP_URL;
-const siteUrl = process.env.SITE_URL;
-const bingApi = process.env.BING_API_KEY;
+const sitemapUrl = process.env.SITEMAP_URL
+const siteUrl = process.env.SITE_URL
+const bingApi = process.env.BING_API_KEY
+const googleKeyFile = process.env.JSON
 
-const googleJson = fs.readFileSync(`./${process.env.JSON}`, "utf-8");
-const key = JSON.parse(googleJson);
+const batchSize = 50
 
-const urlsFile = "urls.txt";
-const logFile = "log.txt";
+const bingLog = 'bing-log.txt'
+const googleLog = 'google-log.txt'
+const urlsFile = 'urls.txt'
 
 async function fetchXml(url) {
-	const res = await fetch(url);
-	if (!res.ok) throw new Error(`Failed to fetch sitemap: ${res.status}`);
-	return await res.text();
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+  if (!res.ok) throw new Error(`Failed to fetch sitemap (${res.status}): ${url}`)
+  return res.text()
 }
 
 async function crawlSitemap(url) {
-	const xml = await fetchXml(url);
-	const doc = await parser.parseStringPromise(xml);
+  if (visited.has(url)) return []
+  visited.add(url)
 
-	if (doc.sitemapindex?.sitemap?.length) {
-		const children = doc.sitemapindex.sitemap
-			.map((s) => s.loc?.[0])
-			.filter(Boolean);
-		const results = await Promise.all(children.map(crawlSitemap));
-		return results.flat();
-	}
+  const doc = await xml2js.parseStringPromise(await fetchXml(url))
 
-	if (doc.urlset?.url?.length) {
-		return doc.urlset.url.map((u) => u.loc?.[0]).filter(Boolean);
-	}
+  if (doc.sitemapindex?.sitemap?.length) {
+    const children = doc.sitemapindex.sitemap.map((item) => item.loc?.[0]).filter(Boolean)
 
-	return [];
+    return (await Promise.all(children.map(crawlSitemap))).flat()
+  }
+
+  return doc.urlset?.url?.map((item) => item.loc?.[0]).filter(Boolean) ?? []
 }
 
-(async () => {
-	try {
-		const urls = Array.from(new Set(await crawlSitemap(sitemapUrl))).sort();
-		fs.writeFileSync(urlsFile, urls.join("\n"));
-		processUrls();
-	} catch (err) {
-		console.error("Error processing sitemap(s):", err);
-	}
-})();
+async function readLog(file) {
+  try {
+    return new Set((await readFile(file, 'utf8')).split('\n').filter(Boolean))
+  } catch (err) {
+    if (err.code === 'ENOENT') return new Set()
+    throw err
+  }
+}
 
-function processUrls() {
-	if (!fs.existsSync(urlsFile)) fs.writeFileSync(urlsFile, "");
-	if (!fs.existsSync(logFile)) fs.writeFileSync(logFile, "");
+async function getBatch(urls, file) {
+  const logged = await readLog(file)
+  const batch = []
 
-	const all = fs.readFileSync(urlsFile, "utf-8").split("\n").filter(Boolean);
-	const logged = fs.readFileSync(logFile, "utf-8").split("\n").filter(Boolean);
-	const batch = all.filter((u) => !logged.includes(u)).slice(0, 50);
+  for (const url of urls) {
+    if (!logged.has(url)) batch.push(url)
+    if (batch.length === batchSize) break
+  }
 
-	if (!batch.length) {
-		console.log("No new URLs to index.");
-		return;
-	}
+  return batch
+}
 
-	const jwtClient = new google.auth.JWT({
-		email: key.client_email,
-		key: key.private_key,
-		scopes: ["https://www.googleapis.com/auth/indexing"],
-	});
+async function logAccepted(file, urls) {
+  if (urls.length) await appendFile(file, `${urls.join('\n')}\n`)
+}
 
-	jwtClient.authorize(async (err, tokens) => {
-		if (err) {
-			console.error("Auth error", err);
-			return;
-		}
+function googleBatchBody(urls, boundary) {
+  const parts = urls.map((url, index) =>
+    [
+      `--${boundary}`,
+      'Content-Type: application/http',
+      'Content-Transfer-Encoding: binary',
+      `Content-ID: <item-${index}>`,
+      '',
+      'POST /v3/urlNotifications:publish HTTP/1.1',
+      'Content-Type: application/json',
+      '',
+      JSON.stringify({ url, type: 'URL_UPDATED' }),
+      '',
+    ].join('\r\n')
+  )
 
-		const operationType = "URL_UPDATED";
-		const boundary = "batch_boundary";
+  return `${parts.join('')}--${boundary}--\r\n`
+}
 
-		const bodyParts = batch.map(
-			(url) =>
-				`--${boundary}\nContent-Type: application/http\nContent-ID:\n\nPOST /v3/urlNotifications:publish HTTP/1.1\nContent-Type: application/json\n\n${JSON.stringify(
-					{ url, type: operationType },
-				)}`,
-		);
+function acceptedGoogleUrls(response, contentType, urls) {
+  const boundary = /boundary="?([^";]+)"?/i.exec(contentType)?.[1]
+  if (!boundary) throw new Error('Google returned no multipart boundary.')
 
-		const body = bodyParts.join("\n") + `\n--${boundary}--`;
+  const accepted = new Set()
+  let responses = 0
 
-		let googleSuccessUrls = [];
-		try {
-			const googleRes = await fetch("https://indexing.googleapis.com/batch", {
-				method: "POST",
-				headers: {
-					"Content-Type": `multipart/mixed; boundary=${boundary}`,
-					Authorization: `Bearer ${tokens.access_token}`,
-				},
-				body,
-			});
+  for (const part of response.split(`--${boundary}`).slice(1)) {
+    const id = /^Content-ID:\s*<response-item-(\d+)>/im.exec(part)
+    const status = /HTTP\/(?:1\.[01]|2)\s+(\d{3})\b/.exec(part)
+    if (!id || !status) continue
 
-			const text = await googleRes.text();
-			if (!googleRes.ok) throw new Error(text);
-			googleSuccessUrls = [...batch];
-			console.log("Google request completed.");
-		} catch (err) {
-			console.error("Google indexing error:", err);
-		}
+    const index = Number(id[1])
+    if (index >= urls.length) continue
 
-		const bingSuccessUrls = [];
-		const chunkSize = 50;
-		for (let i = 0; i < batch.length; i += chunkSize) {
-			const chunk = batch.slice(i, i + chunkSize);
-			const ok = await submitToBing(chunk);
-			if (ok) bingSuccessUrls.push(...chunk);
-			await new Promise((r) => setTimeout(r, 2000));
-		}
+    responses++
+    const code = Number(status[1])
+    if (code >= 200 && code < 300) accepted.add(urls[index])
+  }
 
-		const succeededUrls = Array.from(
-			new Set([...googleSuccessUrls, ...bingSuccessUrls]),
-		);
+  if (responses !== urls.length) {
+    throw new Error(
+      `Google returned ${responses}/${urls.length} identifiable batch responses; nothing was logged.`
+    )
+  }
 
-		if (succeededUrls.length) {
-			succeededUrls.forEach((url) => fs.appendFileSync(logFile, url + "\n"));
-			console.log(
-				`✅ Logged ${succeededUrls.length} successfully indexed URLs.`,
-			);
-		} else {
-			console.warn("❌ No URLs succeeded this run.");
-		}
-	});
+  return [...accepted]
+}
+
+async function submitToGoogle(urls, accessToken) {
+  const boundary = `batch_${randomUUID()}`
+  const res = await fetch('https://indexing.googleapis.com/batch', {
+    method: 'POST',
+    headers: {
+      'Content-Type': `multipart/mixed; boundary=${boundary}`,
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: googleBatchBody(urls, boundary),
+    signal: AbortSignal.timeout(30_000),
+  })
+
+  const text = await res.text()
+  if (!res.ok) throw new Error(`Google HTTP ${res.status}: ${text.slice(0, 500)}`)
+
+  return acceptedGoogleUrls(text, res.headers.get('content-type') ?? '', urls)
+}
+
+async function runGoogle(urls) {
+  const batch = await getBatch(urls, googleLog)
+  if (!batch.length) {
+    console.log('Google: no new URLs to submit.')
+    return
+  }
+
+  if (!googleKeyFile) throw new Error('Google: JSON environment variable is missing.')
+
+  const key = JSON.parse(await readFile(googleKeyFile, 'utf8'))
+  const jwtClient = new google.auth.JWT({
+    email: key.client_email,
+    key: key.private_key,
+    scopes: ['https://www.googleapis.com/auth/indexing'],
+  })
+
+  const { access_token: accessToken } = await jwtClient.authorize()
+  if (!accessToken) throw new Error('Google authentication returned no access token.')
+
+  const accepted = await submitToGoogle(batch, accessToken)
+  await logAccepted(googleLog, accepted)
+  console.log(`Google: ${accepted.length}/${batch.length} URL submissions accepted.`)
 }
 
 async function submitToBing(urls) {
-	try {
-		const res = await fetch(
-			`https://ssl.bing.com/webmaster/api.svc/json/SubmitUrlBatch?apikey=${bingApi}`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					siteUrl,
-					urlList: urls,
-				}),
-			},
-		);
+  const endpoint = new URL('https://ssl.bing.com/webmaster/api.svc/json/SubmitUrlBatch')
+  endpoint.searchParams.set('apikey', bingApi)
 
-		const text = await res.text();
-		if (!res.ok) throw new Error(text);
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ siteUrl, urlList: urls }),
+    signal: AbortSignal.timeout(30_000),
+  })
 
-		const data = JSON.parse(text);
-		if (data?.ErrorCode === 2 && /Quota/.test(data?.Message)) {
-			console.warn(
-				"⚠️ Bing quota reached, delaying remaining URLs until tomorrow.",
-			);
-			return false;
-		}
+  const text = await res.text()
+  if (!res.ok) throw new Error(`Bing HTTP ${res.status}: ${text.slice(0, 500)}`)
 
-		console.log("Bing indexing complete");
-		return true;
-	} catch (err) {
-		console.error("Bing indexing error:", err);
-		return false;
-	}
+  const result = JSON.parse(text)
+  const error = result?.ErrorCode ? result : result?.d?.ErrorCode ? result.d : null
+  if (error)
+    throw new Error(`Bing API error ${error.ErrorCode}: ${error.Message ?? 'Unknown error'}`)
 }
+
+async function runBing(urls) {
+  const batch = await getBatch(urls, bingLog)
+  if (!batch.length) {
+    console.log('Bing: no new URLs to submit.')
+    return
+  }
+
+  if (!bingApi || !siteUrl) throw new Error('Bing: BING_API_KEY or SITE_URL is missing.')
+
+  await submitToBing(batch)
+  await logAccepted(bingLog, batch)
+  console.log(`Bing: ${batch.length}/${batch.length} URL submissions accepted.`)
+}
+
+async function main() {
+  if (!sitemapUrl) throw new Error('SITEMAP_URL is missing.')
+
+  const urls = [...new Set(await crawlSitemap(sitemapUrl))].sort()
+  await writeFile(urlsFile, urls.join('\n'))
+  console.log(`Found ${urls.length} unique URLs.`)
+
+  const results = await Promise.allSettled([runGoogle(urls), runBing(urls)])
+  for (const [index, result] of results.entries()) {
+    if (result.status === 'rejected') {
+      console.error(`${index === 0 ? 'Google' : 'Bing'} submission error:`, result.reason)
+      process.exitCode = 1
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error('Error processing sitemap(s):', err)
+  process.exitCode = 1
+})

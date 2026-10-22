@@ -91,5 +91,7 @@ docker-compose.override.yml
 debug/
 .npmrc.local
 rubix-studios.json
-log.txt
+
+bing-log.txt
+google-log.txt
 urls.txt
