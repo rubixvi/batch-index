@@ -44,12 +44,12 @@ BING_API_KEY="bing-api-key-here"
 
 ### Reference
 
-| Variable | Description |
-|---|---|
-| `SITEMAP_URL` | Public sitemap or sitemap index URL |
-| `SITE_URL` | Root website URL registered in Bing Webmaster Tools |
-| `JSON` | Google service account credentials filename |
-| `BING_API_KEY` | Bing Webmaster API key |
+| Variable       | Description                                         |
+| -------------- | --------------------------------------------------- |
+| `SITEMAP_URL`  | Public sitemap or sitemap index URL                 |
+| `SITE_URL`     | Root website URL registered in Bing Webmaster Tools |
+| `JSON`         | Google service account credentials filename         |
+| `BING_API_KEY` | Bing Webmaster API key                              |
 
 ## Google Setup
 
@@ -75,7 +75,6 @@ The script uses the Google Indexing API through a Google Cloud service account.
 ### Search Console Access
 
 The service account email must be added as an owner inside Google Search Console.
-
 1. Open Google Search Console
 2. Select your property
 3. Navigate to:
@@ -121,7 +120,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 For support or inquiries:
-
 - LinkedIn: [rubixvi](https://www.linkedin.com/in/rubixvi/)
 - Website: [Rubix Studios](https://rubixstudios.com.au)
 
