@@ -63,7 +63,7 @@ async function logAccepted(file, urls) {
   if (urls.length) await appendFile(file, `${urls.join('\n')}\n`)
 }
 
-function googleBatchBody(urls, boundary) {
+function batchBody(urls, boundary) {
   const parts = urls.map((url, index) =>
     [
       `--${boundary}`,
@@ -82,7 +82,7 @@ function googleBatchBody(urls, boundary) {
   return `${parts.join('')}--${boundary}--\r\n`
 }
 
-function acceptedGoogleUrls(response, contentType, urls) {
+function acceptedUrls(response, contentType, urls) {
   const boundary = /boundary="?([^";]+)"?/i.exec(contentType)?.[1]
   if (!boundary) throw new Error('Google returned no multipart boundary.')
 
@@ -111,7 +111,7 @@ function acceptedGoogleUrls(response, contentType, urls) {
   return [...accepted]
 }
 
-async function submitToGoogle(urls, accessToken) {
+async function submitGoogle(urls, accessToken) {
   const boundary = `batch_${randomUUID()}`
   const res = await fetch('https://indexing.googleapis.com/batch', {
     method: 'POST',
@@ -119,14 +119,14 @@ async function submitToGoogle(urls, accessToken) {
       'Content-Type': `multipart/mixed; boundary=${boundary}`,
       Authorization: `Bearer ${accessToken}`,
     },
-    body: googleBatchBody(urls, boundary),
+    body: batchBody(urls, boundary),
     signal: AbortSignal.timeout(30_000),
   })
 
   const text = await res.text()
   if (!res.ok) throw new Error(`Google HTTP ${res.status}: ${text.slice(0, 500)}`)
 
-  return acceptedGoogleUrls(text, res.headers.get('content-type') ?? '', urls)
+  return acceptedUrls(text, res.headers.get('content-type') ?? '', urls)
 }
 
 async function runGoogle(urls) {
@@ -148,12 +148,12 @@ async function runGoogle(urls) {
   const { access_token: accessToken } = await jwtClient.authorize()
   if (!accessToken) throw new Error('Google authentication returned no access token.')
 
-  const accepted = await submitToGoogle(batch, accessToken)
+  const accepted = await submitGoogle(batch, accessToken)
   await logAccepted(googleLog, accepted)
   console.log(`Google: ${accepted.length}/${batch.length} URL submissions accepted.`)
 }
 
-async function submitToBing(urls) {
+async function submitBing(urls) {
   const endpoint = new URL('https://ssl.bing.com/webmaster/api.svc/json/SubmitUrlBatch')
   endpoint.searchParams.set('apikey', bingApi)
 
@@ -182,7 +182,7 @@ async function runBing(urls) {
 
   if (!bingApi || !siteUrl) throw new Error('Bing: BING_API_KEY or SITE_URL is missing.')
 
-  await submitToBing(batch)
+  await submitBing(batch)
   await logAccepted(bingLog, batch)
   console.log(`Bing: ${batch.length}/${batch.length} URL submissions accepted.`)
 }

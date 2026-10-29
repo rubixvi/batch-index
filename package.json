@@ -12,8 +12,8 @@
     "node": ">=24.22.1 <25 || >=26.12.1",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@12.15.0",
   "devDependencies": {
     "@biomejs/biome": "^2.6.3"
-  }
+  },
+  "packageManager": "pnpm@12.16.1"
 }
