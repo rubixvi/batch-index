@@ -75,6 +75,7 @@ The script uses the Google Indexing API through a Google Cloud service account.
 ### Search Console Access
 
 The service account email must be added as an owner inside Google Search Console.
+
 1. Open Google Search Console
 2. Select your property
 3. Navigate to:
@@ -120,6 +121,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 For support or inquiries:
+
 - LinkedIn: [rubixvi](https://www.linkedin.com/in/rubixvi/)
 - Website: [Rubix Studios](https://rubixstudios.com.au)
 
