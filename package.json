@@ -13,7 +13,7 @@
     "pnpm": ">=10"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.6"
+    "@biomejs/biome": "^2.6.7"
   },
   "packageManager": "pnpm@12.18.0"
 }
