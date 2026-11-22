@@ -26,7 +26,7 @@ The script recursively crawls sitemap indexes, extracts URLs, submits them in ba
 
 Clone the repository and install dependencies.
 
-```
+```bash
 pnpm install
 ```
 
@@ -34,7 +34,7 @@ pnpm install
 
 Create a .env or rename .env.example file in the project root.
 
-```
+```text
 SITEMAP_URL="https://yourwebsite.com/sitemap.xml"
 SITE_URL="yourwebsite.com"
 JSON="yourwebsite.json"
@@ -84,7 +84,7 @@ The service account email must be added as an owner inside Google Search Console
 
 Example service account email:
 
-```
+```text
 my-service-account@project-id.iam.gserviceaccount.com
 ```
 
@@ -102,7 +102,7 @@ Without Search Console ownership, Google indexing requests will fail.
 
 Add the key to your .env file:
 
-```
+```text
 BING_API_KEY="your-api-key"
 ```
 
@@ -110,7 +110,7 @@ BING_API_KEY="your-api-key"
 
 Run the script:
 
-```
+```bash
 node index.js
 ```
 

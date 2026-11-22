@@ -9,7 +9,7 @@ const visited = new Set()
 const sitemapUrl = process.env.SITEMAP_URL
 const siteUrl = process.env.SITE_URL
 const bingApi = process.env.BING_API_KEY
-const googleKeyFile = process.env.JSON
+const googleKey = process.env.JSON
 
 const batchSize = 50
 
@@ -136,9 +136,9 @@ async function runGoogle(urls) {
     return
   }
 
-  if (!googleKeyFile) throw new Error('Google: JSON environment variable is missing.')
+  if (!googleKey) throw new Error('Google: JSON environment variable is missing.')
 
-  const key = JSON.parse(await readFile(googleKeyFile, 'utf8'))
+  const key = JSON.parse(await readFile(googleKey, 'utf8'))
   const jwtClient = new google.auth.JWT({
     email: key.client_email,
     key: key.private_key,
